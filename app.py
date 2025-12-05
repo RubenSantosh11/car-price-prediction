@@ -670,6 +670,412 @@ with st.expander("💡 Tips for Best Results"):
        - Focus on high-impact features for biggest price changes
        - Use "What-If" suggestions to optimize for your budget
     """)
+# Add this after your existing imports
+from scipy import stats
+
+# ===========================
+# BIAS DETECTION FUNCTIONS
+# ===========================
+
+def analyze_bias(model_params, feature_names):
+    """
+    Analyze potential bias in model predictions across different feature segments
+    """
+    np.random.seed(42)
+    n_samples = 1000
+    
+    # Generate synthetic test data covering feature ranges
+    test_data = {
+        'wheelbase': np.random.uniform(86, 120, n_samples),
+        'carlength': np.random.uniform(141, 208, n_samples),
+        'carwidth': np.random.uniform(60, 72, n_samples),
+        'carheight': np.random.uniform(47, 60, n_samples),
+        'curbweight': np.random.uniform(1488, 4066, n_samples),
+        'enginesize': np.random.uniform(61, 326, n_samples),
+        'boreratio': np.random.uniform(2.54, 3.94, n_samples),
+        'horsepower': np.random.uniform(48, 288, n_samples),
+        'citympg': np.random.uniform(13, 49, n_samples),
+        'highwaympg': np.random.uniform(16, 54, n_samples),
+    }
+    
+    # Convert to array
+    X_test = np.column_stack([test_data[name] for name in feature_names])
+    
+    # Make predictions for all samples
+    predictions = []
+    for i in range(n_samples):
+        pred, _ = predict_price(X_test[i].tolist(), model_params)
+        predictions.append(pred)
+    
+    predictions = np.array(predictions)
+    
+    # Analyze bias across different segments
+    bias_analysis = {}
+    
+    # 1. Analyze by efficiency (MPG)
+    low_mpg = predictions[test_data['citympg'] < 20]
+    high_mpg = predictions[test_data['citympg'] >= 35]
+    
+    bias_analysis['efficiency'] = {
+        'low_mpg_mean': np.mean(low_mpg),
+        'high_mpg_mean': np.mean(high_mpg),
+        'difference': np.mean(low_mpg) - np.mean(high_mpg),
+        'low_mpg_std': np.std(low_mpg),
+        'high_mpg_std': np.std(high_mpg)
+    }
+    
+    # 2. Analyze by size (weight)
+    light_cars = predictions[test_data['curbweight'] < 2200]
+    heavy_cars = predictions[test_data['curbweight'] >= 3200]
+    
+    bias_analysis['size'] = {
+        'light_mean': np.mean(light_cars),
+        'heavy_mean': np.mean(heavy_cars),
+        'difference': np.mean(heavy_cars) - np.mean(light_cars),
+        'light_std': np.std(light_cars),
+        'heavy_std': np.std(heavy_cars)
+    }
+    
+    # 3. Analyze by power (horsepower)
+    low_power = predictions[test_data['horsepower'] < 90]
+    high_power = predictions[test_data['horsepower'] >= 180]
+    
+    bias_analysis['power'] = {
+        'low_power_mean': np.mean(low_power),
+        'high_power_mean': np.mean(high_power),
+        'difference': np.mean(high_power) - np.mean(low_power),
+        'low_power_std': np.std(low_power),
+        'high_power_std': np.std(high_power)
+    }
+    
+    # 4. Statistical fairness test (coefficient of variation)
+    cv = np.std(predictions) / np.mean(predictions)
+    bias_analysis['overall_fairness'] = {
+        'coefficient_variation': cv,
+        'mean_prediction': np.mean(predictions),
+        'std_prediction': np.std(predictions),
+        'min_prediction': np.min(predictions),
+        'max_prediction': np.max(predictions)
+    }
+    
+    return bias_analysis, test_data, predictions
+
+def detect_feature_bias(shap_values, feature_names, features):
+    """
+    Detect if certain features have disproportionate impact (potential bias)
+    """
+    impacts = np.abs(shap_values.values[0])
+    total_impact = np.sum(impacts)
+    
+    feature_bias = []
+    for i, (name, impact) in enumerate(zip(feature_names, impacts)):
+        contribution_pct = (impact / total_impact) * 100
+        
+        # Flag if single feature contributes >30% (potential over-reliance)
+        is_biased = contribution_pct > 30
+        
+        feature_bias.append({
+            'feature': name,
+            'contribution_pct': contribution_pct,
+            'absolute_impact': impact,
+            'potentially_biased': is_biased,
+            'your_value': features[i]
+        })
+    
+    return sorted(feature_bias, key=lambda x: x['contribution_pct'], reverse=True)
+
+
+# ===========================
+# ADD THIS AFTER THE EXISTING SHAP SECTIONS (after tab3)
+# ===========================
+
+                # New tabs for fairness and bias
+                st.markdown("---")
+                st.markdown("## ⚖️ Fairness & Bias Analysis")
+                st.markdown("**Ensuring transparent and equitable predictions**")
+                
+                tab_fair1, tab_fair2, tab_fair3 = st.tabs(["🎯 Feature Bias", "📊 Segment Fairness", "🔍 Model Fairness"])
+                
+                with tab_fair1:
+                    st.subheader("Feature Bias Detection")
+                    st.markdown("**Checking if any single feature dominates predictions (potential bias):**")
+                    
+                    # Detect feature bias
+                    feature_bias = detect_feature_bias(shap_values, feature_names, features)
+                    
+                    # Create visualization
+                    bias_df = pd.DataFrame(feature_bias)
+                    
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    colors = ['#ff4444' if x['potentially_biased'] else '#44ff44' 
+                             for x in feature_bias]
+                    
+                    bars = ax.barh(bias_df['feature'], bias_df['contribution_pct'], 
+                                   color=colors, alpha=0.7, edgecolor='black', linewidth=1.2)
+                    
+                    ax.axvline(x=30, color='red', linestyle='--', linewidth=2, 
+                              label='Bias Threshold (30%)')
+                    ax.set_xlabel('Contribution to Prediction (%)', fontsize=12, fontweight='bold')
+                    ax.set_title('Feature Contribution Distribution\n(Red = Potential Over-Reliance)', 
+                                fontsize=14, fontweight='bold', pad=15)
+                    ax.legend()
+                    ax.grid(axis='x', alpha=0.3)
+                    
+                    # Add percentage labels
+                    for bar, val in zip(bars, bias_df['contribution_pct']):
+                        ax.text(val + 1, bar.get_y() + bar.get_height()/2, 
+                               f'{val:.1f}%', va='center', fontweight='bold')
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    
+                    # Show bias analysis
+                    st.markdown("**Bias Assessment:**")
+                    
+                    biased_features = [f for f in feature_bias if f['potentially_biased']]
+                    
+                    if len(biased_features) == 0:
+                        st.success("✅ **No Feature Bias Detected** - Prediction is well-distributed across features")
+                        st.write("No single feature dominates the prediction (all <30% contribution)")
+                    else:
+                        st.warning(f"⚠️ **Potential Bias Detected** - {len(biased_features)} feature(s) have high influence")
+                        for feat in biased_features:
+                            st.markdown(f"""
+                            - **{feat['feature'].replace('_', ' ').title()}**: {feat['contribution_pct']:.1f}% contribution
+                              - Your value: {feat['your_value']:.2f}
+                              - This feature has disproportionate impact on pricing
+                            """)
+                        
+                        st.info("""
+                        **What this means:**  
+                        When a single feature contributes >30% to the prediction, the model may be 
+                        over-relying on it. This could indicate:
+                        - Feature engineering needed
+                        - Data collection bias in training set
+                        - Need for additional features to balance prediction
+                        """)
+                    
+                    # Show detailed contribution table
+                    st.markdown("**Detailed Feature Contributions:**")
+                    display_bias = bias_df[['feature', 'contribution_pct', 'your_value']].copy()
+                    display_bias.columns = ['Feature', 'Contribution (%)', 'Your Value']
+                    display_bias['Contribution (%)'] = display_bias['Contribution (%)'].apply(lambda x: f"{x:.2f}%")
+                    display_bias['Your Value'] = display_bias['Your Value'].apply(lambda x: f"{x:.2f}")
+                    st.dataframe(display_bias, use_container_width=True, hide_index=True)
+                
+                with tab_fair2:
+                    st.subheader("Segment Fairness Analysis")
+                    st.markdown("**Analyzing prediction fairness across different car segments:**")
+                    
+                    with st.spinner("Running fairness analysis across segments..."):
+                        bias_analysis, test_data, predictions = analyze_bias(model_params, feature_names)
+                    
+                    # Efficiency segment analysis
+                    st.markdown("### 🌱 Efficiency Segment (City MPG)")
+                    
+                    col_eff1, col_eff2, col_eff3 = st.columns(3)
+                    
+                    with col_eff1:
+                        st.metric("Low Efficiency (<20 MPG)", 
+                                 f"${bias_analysis['efficiency']['low_mpg_mean']:,.0f}",
+                                 f"±${bias_analysis['efficiency']['low_mpg_std']:,.0f}")
+                    
+                    with col_eff2:
+                        st.metric("High Efficiency (≥35 MPG)", 
+                                 f"${bias_analysis['efficiency']['high_mpg_mean']:,.0f}",
+                                 f"±${bias_analysis['efficiency']['high_mpg_std']:,.0f}")
+                    
+                    with col_eff3:
+                        price_diff = bias_analysis['efficiency']['difference']
+                        st.metric("Price Difference", 
+                                 f"${abs(price_diff):,.0f}",
+                                 "Higher for low MPG" if price_diff > 0 else "Lower for low MPG")
+                    
+                    # Fairness assessment for efficiency
+                    if abs(price_diff) < 5000:
+                        st.success("✅ **Fair Treatment** - Minimal bias between efficiency segments")
+                    elif abs(price_diff) < 10000:
+                        st.warning("⚠️ **Moderate Disparity** - Some difference in pricing by efficiency")
+                    else:
+                        st.error("❌ **Significant Disparity** - Large price difference by efficiency")
+                    
+                    st.markdown("---")
+                    
+                    # Size segment analysis
+                    st.markdown("### 🚗 Size Segment (Weight)")
+                    
+                    col_size1, col_size2, col_size3 = st.columns(3)
+                    
+                    with col_size1:
+                        st.metric("Light Cars (<2200 lbs)", 
+                                 f"${bias_analysis['size']['light_mean']:,.0f}",
+                                 f"±${bias_analysis['size']['light_std']:,.0f}")
+                    
+                    with col_size2:
+                        st.metric("Heavy Cars (≥3200 lbs)", 
+                                 f"${bias_analysis['size']['heavy_mean']:,.0f}",
+                                 f"±${bias_analysis['size']['heavy_std']:,.0f}")
+                    
+                    with col_size3:
+                        size_diff = bias_analysis['size']['difference']
+                        st.metric("Price Difference", 
+                                 f"${abs(size_diff):,.0f}",
+                                 "Higher for heavy" if size_diff > 0 else "Lower for heavy")
+                    
+                    # Visualization of segment distributions
+                    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+                    
+                    # Efficiency distribution
+                    low_mpg_pred = predictions[test_data['citympg'] < 20]
+                    high_mpg_pred = predictions[test_data['citympg'] >= 35]
+                    
+                    axes[0].hist(low_mpg_pred, bins=30, alpha=0.6, label='Low MPG (<20)', color='#ff6b6b')
+                    axes[0].hist(high_mpg_pred, bins=30, alpha=0.6, label='High MPG (≥35)', color='#51cf66')
+                    axes[0].axvline(np.mean(low_mpg_pred), color='#ff6b6b', linestyle='--', linewidth=2)
+                    axes[0].axvline(np.mean(high_mpg_pred), color='#51cf66', linestyle='--', linewidth=2)
+                    axes[0].set_xlabel('Predicted Price ($)', fontweight='bold')
+                    axes[0].set_ylabel('Frequency', fontweight='bold')
+                    axes[0].set_title('Price Distribution by Efficiency', fontweight='bold')
+                    axes[0].legend()
+                    axes[0].grid(alpha=0.3)
+                    
+                    # Size distribution
+                    light_pred = predictions[test_data['curbweight'] < 2200]
+                    heavy_pred = predictions[test_data['curbweight'] >= 3200]
+                    
+                    axes[1].hist(light_pred, bins=30, alpha=0.6, label='Light (<2200 lbs)', color='#4ecdc4')
+                    axes[1].hist(heavy_pred, bins=30, alpha=0.6, label='Heavy (≥3200 lbs)', color='#ffd93d')
+                    axes[1].axvline(np.mean(light_pred), color='#4ecdc4', linestyle='--', linewidth=2)
+                    axes[1].axvline(np.mean(heavy_pred), color='#ffd93d', linestyle='--', linewidth=2)
+                    axes[1].set_xlabel('Predicted Price ($)', fontweight='bold')
+                    axes[1].set_ylabel('Frequency', fontweight='bold')
+                    axes[1].set_title('Price Distribution by Weight', fontweight='bold')
+                    axes[1].legend()
+                    axes[1].grid(alpha=0.3)
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    
+                    st.info("""
+                    **Interpreting Fairness:**  
+                    - **Overlapping distributions** → Fair treatment across segments
+                    - **Separated distributions** → Systematic pricing differences
+                    - **Large gaps** → Potential bias requiring investigation
+                    """)
+                
+                with tab_fair3:
+                    st.subheader("Overall Model Fairness")
+                    st.markdown("**Global fairness metrics and model behavior:**")
+                    
+                    # Overall statistics
+                    overall = bias_analysis['overall_fairness']
+                    
+                    col_fair1, col_fair2, col_fair3, col_fair4 = st.columns(4)
+                    
+                    with col_fair1:
+                        st.metric("Mean Prediction", f"${overall['mean_prediction']:,.0f}")
+                    
+                    with col_fair2:
+                        st.metric("Std Deviation", f"${overall['std_prediction']:,.0f}")
+                    
+                    with col_fair3:
+                        st.metric("Price Range", 
+                                 f"${overall['max_prediction'] - overall['min_prediction']:,.0f}")
+                    
+                    with col_fair4:
+                        cv = overall['coefficient_variation']
+                        cv_pct = cv * 100
+                        st.metric("Variation Coefficient", f"{cv_pct:.1f}%")
+                    
+                    st.markdown("---")
+                    
+                    # Fairness score
+                    st.markdown("### 🎯 Fairness Score")
+                    
+                    # Calculate fairness score (0-100)
+                    # Lower CV = better fairness
+                    fairness_score = max(0, 100 - (cv * 200))  # Scale CV to 0-100
+                    
+                    # Display fairness gauge
+                    col_gauge1, col_gauge2 = st.columns([1, 2])
+                    
+                    with col_gauge1:
+                        st.markdown(f"### **{fairness_score:.1f}/100**")
+                        
+                        if fairness_score >= 80:
+                            st.success("✅ Excellent Fairness")
+                            fairness_label = "Excellent"
+                            fairness_color = "#51cf66"
+                        elif fairness_score >= 60:
+                            st.info("ℹ️ Good Fairness")
+                            fairness_label = "Good"
+                            fairness_color = "#4ecdc4"
+                        elif fairness_score >= 40:
+                            st.warning("⚠️ Moderate Fairness")
+                            fairness_label = "Moderate"
+                            fairness_color = "#ffd93d"
+                        else:
+                            st.error("❌ Poor Fairness")
+                            fairness_label = "Needs Improvement"
+                            fairness_color = "#ff6b6b"
+                    
+                    with col_gauge2:
+                        # Create fairness gauge chart
+                        fig, ax = plt.subplots(figsize=(8, 3))
+                        ax.barh(['Fairness'], [fairness_score], color=fairness_color, height=0.5)
+                        ax.set_xlim(0, 100)
+                        ax.set_xlabel('Fairness Score', fontweight='bold')
+                        ax.set_title(f'Model Fairness: {fairness_label}', fontweight='bold')
+                        ax.grid(axis='x', alpha=0.3)
+                        ax.text(fairness_score + 2, 0, f'{fairness_score:.1f}', 
+                               va='center', fontweight='bold', fontsize=12)
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                    
+                    st.markdown("---")
+                    
+                    # Explanation
+                    st.markdown("### 📖 Understanding Fairness Metrics")
+                    
+                    st.markdown(f"""
+                    **Coefficient of Variation (CV): {cv_pct:.2f}%**
+                    - Measures relative variability in predictions
+                    - Lower CV = more consistent, fair predictions
+                    - Your model: {"Excellent consistency" if cv < 0.3 else "Moderate consistency" if cv < 0.5 else "High variability"}
+                    
+                    **What Makes a Fair Model:**
+                    - ✅ Consistent predictions across all feature ranges
+                    - ✅ No single feature dominates (all <30% contribution)
+                    - ✅ Similar price distributions across segments
+                    - ✅ Transparent, explainable predictions (SHAP)
+                    
+                    **Bias Mitigation Strategies:**
+                    - Collect more diverse training data
+                    - Balance feature representation
+                    - Regular fairness audits
+                    - Monitor predictions across segments
+                    - Use explainability to catch unfair patterns
+                    """)
+                    
+                    # Recommendation
+                    st.markdown("### 💡 Recommendations")
+                    
+                    if fairness_score >= 70:
+                        st.success("""
+                        **Model shows good fairness!** Continue monitoring and:
+                        - Regularly test on new data segments
+                        - Document any edge cases discovered
+                        - Maintain transparent prediction explanations
+                        """)
+                    else:
+                        st.warning("""
+                        **Consider improvements:**
+                        - Analyze which segments show largest disparities
+                        - Collect additional training data for underrepresented segments
+                        - Consider feature engineering to reduce single-feature dominance
+                        - Implement regular fairness audits
+                        """)
+ 
 
 st.markdown("---")
 st.caption("🚗 Car Price Predictor with Explainable AI | Built with ❤️ using Pure Math + SHAP | No ML Libraries Required!")
